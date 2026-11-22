@@ -1,14 +1,30 @@
 """Create Linux (.tar.gz) and Windows 11 (.zip) runtime packages without development clutter."""
+import io
 import sys
 import tarfile
 import zipfile
 from pathlib import Path
+
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 from catgirl_pet.animation import ANIMATIONS
 
 VERSION = 'v1.0.0'
+RELEASE_FRAME_SIZE = (576, 624)
+
+
+def _package_bytes(name, path):
+    if name.endswith('.png'):
+        with Image.open(path) as im:
+            im = im.convert('RGBA')
+            if im.size != RELEASE_FRAME_SIZE:
+                im = im.resize(RELEASE_FRAME_SIZE, Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            im.save(buf, format='PNG', optimize=True)
+            return buf.getvalue()
+    return path.read_bytes()
 
 
 def collect_files(platform):
@@ -42,15 +58,16 @@ def main():
     dest.mkdir(exist_ok=True)
     linux = dest / f'gemini-desktop-pet-{VERSION}-linux.tar.gz'
     windows = dest / f'gemini-desktop-pet-{VERSION}-win11.zip'
-    with tarfile.open(linux, 'w:gz') as archive:
+    with tarfile.open(linux, 'w:gz', compresslevel=9) as archive:
         for name, path in collect_files('linux'):
+            payload = _package_bytes(name, path)
             info = archive.gettarinfo(str(path), arcname=f'gemini-desktop-pet-linux/{name}')
+            info.size = len(payload)
             info.mode = 0o755 if name.endswith('.sh') else 0o644
-            with path.open('rb') as data:
-                archive.addfile(info, data)
-    with zipfile.ZipFile(windows, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+            archive.addfile(info, io.BytesIO(payload))
+    with zipfile.ZipFile(windows, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, path in collect_files('windows'):
-            archive.write(path, arcname=f'gemini-desktop-pet-win11/{name}')
+            archive.writestr(f'gemini-desktop-pet-win11/{name}', _package_bytes(name, path))
     print(linux)
     print(windows)
 
